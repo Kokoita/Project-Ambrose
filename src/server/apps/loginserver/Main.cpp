@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Login server entry point: runs setup in Setup.Mode for the install and type dump, stopping cleanly when a stop arrives meanwhile and never saving an install it has no type dump for, loads account and login settings and the type dump, refuses a live verifier key ring that does not parse, lacks its active key or drops a key a stored verifier still uses, reapplies the account settings when one changes live, declares the login message table and checks it against the client's message definitions, refuses to serve clients from an install without a type dump, naming why and where ClientDir came from, or without both databases, opens the login and characters databases, which the admin API reports, lists the updates of and applies data-only updates to while the server runs, listens for clients, and offers account console commands until shutdown, telling connected clients before it shuts down and closing the databases, which drains their callbacks, before its network threads stop.
+ * Login server entry point: runs setup in Setup.Mode for the install and type dump, stopping cleanly when a stop arrives meanwhile and never saving an install it has no type dump for, loads account and login settings and the type dump, refuses a live verifier key ring that does not parse, lacks its active key or drops a key a stored verifier still uses, validates a non-empty maintenance reason and a complete increasing maintenance window on live changes, reapplies login settings when they change live and account settings when one changes live, declares the login message table and checks it against the client's message definitions, refuses to serve clients from an install without a type dump, naming why and where ClientDir came from, or without both databases, opens the login and characters databases, which the admin API reports, lists the updates of and applies data-only updates to while the server runs, listens for clients, and offers account console commands until shutdown, telling connected clients before it shuts down and closing the databases, which drains their callbacks, before its network threads stop.
  */
 
 #include "DatabaseSettingStore.h"
@@ -284,6 +284,20 @@ namespace
                 LOG_WARN("server.loginserver", "LoginDatabaseInfo is empty, so live settings take their config values and cannot be changed or kept");
             for (char const* key : { "Account.VerifierKeys", "Account.VerifierActiveKey" })
                 sSettings.AddCheck(key, [](std::string_view, Settings::ProposedValue const& proposed) { return CheckVerifierKeys(proposed); });
+            auto const checkMaintenance = [](std::string_view, Settings::ProposedValue const& proposed) -> std::optional<std::string>
+            {
+                if (proposed("Login.Maintenance") == "true" && Ambrose::Trim(proposed("Login.MaintenanceReason")).empty())
+                    return "Login.MaintenanceReason must explain the maintenance while Login.Maintenance is on";
+                std::optional<uint64> const start = Ambrose::StringTo<uint64>(proposed("Login.MaintenanceWindowStart"));
+                std::optional<uint64> const end = Ambrose::StringTo<uint64>(proposed("Login.MaintenanceWindowEnd"));
+                if (!start || !end)
+                    return "Login.MaintenanceWindowStart and Login.MaintenanceWindowEnd must be Unix timestamps";
+                if ((*start == 0) != (*end == 0) || (*start != 0 && *end <= *start))
+                    return "Login.MaintenanceWindowStart and Login.MaintenanceWindowEnd must both be zero or form an increasing window";
+                return std::nullopt;
+            };
+            for (char const* key : { "Login.Maintenance", "Login.MaintenanceReason", "Login.MaintenanceWindowStart", "Login.MaintenanceWindowEnd" })
+                sSettings.AddCheck(key, checkMaintenance);
             if (!StartSettings(LoginDatabase.IsOpen() ? SettingStores::ForLogin() : nullptr))
             {
                 _databases.Close();

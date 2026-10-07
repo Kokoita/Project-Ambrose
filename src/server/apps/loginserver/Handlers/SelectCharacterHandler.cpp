@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Answers MSG_SELECTCHARACTER by sending the client to a gameserver: loads the chosen wizard without blocking the network thread, refuses one that is not this account's, one that is deleted and one picked when no realm is online, and otherwise mints a single-use handoff key, writes it to login_key and waits for that write to commit before saying a word, so the gameserver can never be handed a key the login server has not finished writing down, then replies MSG_CHARACTERSELECTED with the realm's address and port, the wizard's zone and place, and Error=0; every refusal sends Error=1 and writes no key, so a failed pick leaves nothing behind that anybody could present later.
+ * Answers MSG_SELECTCHARACTER by sending the client to a gameserver: loads the chosen wizard without blocking the network thread, refuses one that is not this account's, one that is deleted, one picked when no realm is online, and a player account that tries to enter a realm during maintenance, and otherwise mints a single-use handoff key, writes it to login_key and waits for that write to commit before saying a word, so the gameserver can never be handed a key the login server has not finished writing down, then replies MSG_CHARACTERSELECTED with the realm's address and port, the wizard's zone and place, and Error=0; every refusal sends Error=1 and writes no key, so a failed pick leaves nothing behind that anybody could present later.
  */
 
 #include "Base64.h"
@@ -64,6 +64,12 @@ void LoginSession::HandleSelectCharacter(LoginMessages::SelectCharacter& message
 
 void LoginSession::SelectCharacter(uint64 charId, std::string const& realmName, PreparedQueryResult result)
 {
+    std::shared_ptr<LoginSettings const> const settings = sLoginMgr.GetSettings();
+    if (!settings->AllowsSignIn(_securityLevel))
+    {
+        FailCharacterSelect(charId, fmt::format("installation maintenance refuses realm entry: {}", settings->MaintenanceReason));
+        return;
+    }
     std::vector<CharacterSummary> const characters = result ? CharacterRepository::ReadCharacters(*result) : std::vector<CharacterSummary>();
     if (characters.empty())
     {

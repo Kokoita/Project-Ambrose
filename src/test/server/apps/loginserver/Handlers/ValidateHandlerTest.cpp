@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Drives MSG_USER_VALIDATE over loopback against a real LoginSession: a closed login database times out and closes, and with AMBROSE_TEST_DB set a PassKey3 made from the session key a login stored and this connection's offer is admitted with MSG_USER_VALIDATE_RSP Error=0 and MSG_USER_ADMIT_IND and renews the key, while one made from the previous connection's offer, from a wrong key, from another machine, for an unknown account, after a password change or a ban, or for a key renewed longer ago than a Login.SessionKeyLifetime lowered without a restart each get only MSG_USER_VALIDATE_RSP with their error and are closed.
+ * Drives MSG_USER_VALIDATE over loopback against a real LoginSession: a closed login database times out and closes, and with AMBROSE_TEST_DB set a PassKey3 made from the session key a login stored and this connection's offer is admitted with MSG_USER_VALIDATE_RSP Error=0 and MSG_USER_ADMIT_IND and renews the key, while one made from the previous connection's offer, from a wrong key, from another machine, for an unknown account, after a password change or a ban, during player maintenance or for a key renewed longer ago than a Login.SessionKeyLifetime lowered without a restart each get only MSG_USER_VALIDATE_RSP with their error and are closed.
  */
 
 #include "AccountMgr.h"
@@ -9,8 +9,9 @@
 #include "DatabaseEnv.h"
 #include "Environment.h"
 #include "LoginMgr.h"
-#include "LoginTestHarness.h"
 #include "LoginSession.h"
+#include "LoginSettings.h"
+#include "LoginTestHarness.h"
 #include "PassKey3.h"
 #include "Rec1.h"
 
@@ -166,6 +167,26 @@ TEST_F(ValidateHandlerDatabaseTest, APassKey3FromTheStoredKeyAndThisOfferIsAdmit
     ASSERT_TRUE(holder);
     EXPECT_EQ(holder->GetSessionId(), client.Salt.SessionId);
     EXPECT_GE(Renewed(), before + 100);
+}
+
+TEST_F(ValidateHandlerDatabaseTest, MaintenanceRefusesAValidPlayerSessionKeyWithItsReason)
+{
+    std::string const sessionKey = LogIn();
+    ASSERT_FALSE(sessionKey.empty());
+    LoginSettings settings;
+    settings.Maintenance = true;
+    settings.MaintenanceReason = "Database migration in progress";
+    sLoginMgr.SetSettings(settings);
+
+    LoginClient client = _server->Connect();
+    Send(client, Validate(_accountId, PassKey3::Compute(sessionKey, client.Salt)));
+    std::optional<LoginMessages::UserValidateRsp> const response = ReadMessage<LoginMessages::UserValidateRsp>(client);
+    ASSERT_TRUE(response);
+    EXPECT_EQ(response->Error, AuthResult::ErrorNoLock);
+    EXPECT_EQ(response->Reason, settings.MaintenanceReason);
+    EXPECT_EQ(response->UserId, 0u);
+    EXPECT_TRUE(client.Socket->WaitForClose());
+    EXPECT_FALSE(sLoginMgr.FindAccountSession(_accountId));
 }
 
 TEST_F(ValidateHandlerDatabaseTest, ThePreviousOfferAWrongKeyAnotherMachineAndAnUnknownAccountAreRefused)

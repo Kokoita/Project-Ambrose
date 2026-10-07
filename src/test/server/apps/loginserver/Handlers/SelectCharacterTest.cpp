@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Drives MSG_SELECTCHARACTER over loopback against a real LoginSession with AMBROSE_TEST_DB set: picking a live wizard of this account while a realm is online answers MSG_CHARACTERSELECTED Error=0 carrying that realm's address and port, the wizard's zone and place, and a key that is in login_key against the right account, wizard and realm; picking another account's wizard, a deleted one, or any wizard while no realm is online answers Error!=0 and leaves login_key empty, so a refused pick hands out nothing anybody could present to a gameserver later.
+ * Drives MSG_SELECTCHARACTER over loopback against a real LoginSession with AMBROSE_TEST_DB set: picking a live wizard of this account while a realm is online answers MSG_CHARACTERSELECTED Error=0 carrying that realm's address and port, the wizard's zone and place, and a key that is in login_key against the right account, wizard and realm; picking another account's wizard, a deleted one, one after maintenance starts or any wizard while no realm is online answers Error!=0 and leaves login_key empty, so a refused pick hands out nothing anybody could present to a gameserver later.
  */
 
 #include "AccountMgr.h"
@@ -11,6 +11,7 @@
 #include "Environment.h"
 #include "LocationString.h"
 #include "LoginMgr.h"
+#include "LoginSettings.h"
 #include "LoginTestHarness.h"
 #include "RealmList.h"
 #include "Rec1.h"
@@ -198,6 +199,24 @@ TEST_F(SelectCharacterTest, AnOwnWizardOnAnOnlineRealmIsSentThereWithAKeyThatWas
     EXPECT_EQ((*stored)[2].Get<uint32>(), RealmId);
     EXPECT_EQ((*stored)[3].Get<uint8>(), 0) << "a key that has just been issued has not been spent";
     EXPECT_EQ(CountKeys(), 1u);
+}
+
+TEST_F(SelectCharacterTest, MaintenanceRefusesANewRealmEntryWithoutClosingTheLoginSession)
+{
+    LoginClient client = Authenticated();
+    LoginSettings settings;
+    settings.Maintenance = true;
+    sLoginMgr.SetSettings(settings);
+
+    LoginMessages::SelectCharacter pick;
+    pick.CharId = OwnWizard;
+    Send(client, pick);
+    std::optional<LoginMessages::CharacterSelected> const reply = ReadMessage<LoginMessages::CharacterSelected>(client);
+    ASSERT_TRUE(reply);
+    EXPECT_NE(reply->Error, 0);
+    EXPECT_TRUE(reply->Key.empty());
+    EXPECT_FALSE(client.Socket->WaitForClose(std::chrono::milliseconds(100)));
+    EXPECT_EQ(CountKeys(), 0u);
 }
 
 TEST_F(SelectCharacterTest, AnotherAccountsWizardIsRefusedAndWritesNoKey)

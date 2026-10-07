@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Reads the Login options from config, refusing an empty or overlong server name, clamping out-of-range values and the AFK warning byte, refusing to enforce an empty revision list, and reporting each problem.
+ * Reads the Login options from config, refusing an empty or overlong server name, clamping out-of-range values and the AFK warning byte, refusing to enforce an empty revision list, checking the maintenance reason and optional Unix-time window, and reporting each problem.
  */
 
 #include "LoginSettings.h"
@@ -14,6 +14,11 @@
 bool LoginSettings::AllowsRevision(std::string_view revision) const
 {
     return std::find(AllowedRevisions.begin(), AllowedRevisions.end(), revision) != AllowedRevisions.end();
+}
+
+bool LoginSettings::AllowsSignIn(uint8 securityLevel) const noexcept
+{
+    return !Maintenance || securityLevel >= MaintenanceBypassLevel;
 }
 
 LoginSettings LoginSettings::Load(ConfigMgr const& config, std::vector<std::string>* problems)
@@ -47,6 +52,23 @@ LoginSettings LoginSettings::Load(ConfigMgr const& config, std::vector<std::stri
     {
         report("Login.EnforceRevision = 1 with no Login.AllowedRevision would refuse every client; revisions are not enforced");
         settings.EnforceRevision = false;
+    }
+    settings.Maintenance = config.GetOption<bool>("Login.Maintenance", false, true);
+    settings.MaintenanceBypassLevel = static_cast<uint8>(bounded("Login.MaintenanceBypassLevel", DefaultMaintenanceBypassLevel, 0, MaxMaintenanceBypassLevel));
+    std::string const maintenanceReason = std::string(Ambrose::Trim(config.GetOption<std::string>("Login.MaintenanceReason", std::string(DefaultMaintenanceReason), true)));
+    if (maintenanceReason.empty() || maintenanceReason.size() > MaxMaintenanceReasonBytes)
+        report(fmt::format("Login.MaintenanceReason must be 1-{} bytes; using the default maintenance reason", MaxMaintenanceReasonBytes));
+    else
+        settings.MaintenanceReason = maintenanceReason;
+    settings.MaintenanceWindowStart = config.GetOption<uint64>("Login.MaintenanceWindowStart", 0, true);
+    settings.MaintenanceWindowEnd = config.GetOption<uint64>("Login.MaintenanceWindowEnd", 0, true);
+    if (settings.MaintenanceWindowStart > MaxMaintenanceWindowEpochSeconds || settings.MaintenanceWindowEnd > MaxMaintenanceWindowEpochSeconds ||
+        ((settings.MaintenanceWindowStart == 0) != (settings.MaintenanceWindowEnd == 0)) ||
+        (settings.MaintenanceWindowStart != 0 && settings.MaintenanceWindowEnd <= settings.MaintenanceWindowStart))
+    {
+        report("Login.MaintenanceWindowStart and Login.MaintenanceWindowEnd must both be zero or form an increasing Unix-time window; clearing the window");
+        settings.MaintenanceWindowStart = 0;
+        settings.MaintenanceWindowEnd = 0;
     }
 
     settings.MaxAuthAttempts = bounded("Login.MaxAuthAttempts", DefaultMaxAuthAttempts, 0, MaxAuthAttemptsLimit);

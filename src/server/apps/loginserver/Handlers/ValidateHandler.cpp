@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Validates MSG_USER_VALIDATE, which a client sends to come back to character select without its password: reserves the attempt against the address's lockout, reads the account, its bans, lock and session key in one asynchronous query, refuses a key issued to another machine, one renewed longer ago than Login.SessionKeyLifetime as it stands now, and a PassKey3 not made from that key and this connection's offer, kicks any earlier session holding the account, renews the key and the last login in one transaction, then sends MSG_USER_VALIDATE_RSP with Error=0 and MSG_USER_ADMIT_IND; every refusal sends only MSG_USER_VALIDATE_RSP with the error and closes. A ban or lock refusal carries the ban's end as TimeStamp, in Unix seconds, a permanent one as the latest end the client reads, and no Reason, since the client would show GUI_<Reason> beside its dated ban line.
+ * Validates MSG_USER_VALIDATE, which a client sends to come back to character select without its password: reserves the attempt against the address's lockout, reads the account, its security level, bans, lock and session key in one asynchronous query, refuses a key issued to another machine, one renewed longer ago than Login.SessionKeyLifetime as it stands now, a PassKey3 not made from that key and this connection's offer, or an account maintenance does not admit, kicks any earlier session holding the account, renews the key and the last login in one transaction, then sends MSG_USER_VALIDATE_RSP with Error=0 and MSG_USER_ADMIT_IND; every refusal sends only MSG_USER_VALIDATE_RSP with the error and closes. A ban or lock refusal carries the ban's end as TimeStamp, in Unix seconds, a permanent one as the latest end the client reads, and no Reason, since the client would show GUI_<Reason> beside its dated ban line.
  */
 
 #include "AccountMgr.h"
@@ -38,6 +38,7 @@ struct LoginSession::ValidateAttempt
     LoginSalt Salt;
     uint64 AccountId = 0;
     uint64 MachineId = 0;
+    uint8 SecurityLevel = 0;
     std::string PassKey3;
     std::string Username;
     std::string StoredKey;
@@ -119,14 +120,14 @@ void LoginSession::ContinueValidation(std::shared_ptr<ValidateAttempt> const& at
     }
 
     PreparedResultSet const& row = *result;
-    if (!row[9].IsNull())
+    if (!row[10].IsNull())
     {
-        FailValidation(attempt.get(), AuthResult::MachineBanned, fmt::format("machine {:016X} is banned", attempt->MachineId), false, row[9].Get<uint64>());
+        FailValidation(attempt.get(), AuthResult::MachineBanned, fmt::format("machine {:016X} is banned", attempt->MachineId), false, row[10].Get<uint64>());
         return;
     }
-    if (!row[8].IsNull())
+    if (!row[9].IsNull())
     {
-        FailValidation(attempt.get(), AuthResult::MachineBanned, "the address is banned", false, row[8].Get<uint64>());
+        FailValidation(attempt.get(), AuthResult::MachineBanned, "the address is banned", false, row[9].Get<uint64>());
         return;
     }
     if (row[0].IsNull())
@@ -135,17 +136,18 @@ void LoginSession::ContinueValidation(std::shared_ptr<ValidateAttempt> const& at
         return;
     }
     attempt->Username = row[1].Get<std::string>();
-    if (row[4].IsNull())
+    attempt->SecurityLevel = row[3].Get<uint8>();
+    if (row[5].IsNull())
     {
         FailValidation(attempt.get(), AuthResult::ValidateFailed, "the account holds no session key", true);
         return;
     }
-    if (row[3].Get<uint64>() != attempt->MachineId)
+    if (row[4].Get<uint64>() != attempt->MachineId)
     {
-        FailValidation(attempt.get(), AuthResult::ValidateFailed, fmt::format("its session key was issued to machine {:016X}", row[3].Get<uint64>()), true);
+        FailValidation(attempt.get(), AuthResult::ValidateFailed, fmt::format("its session key was issued to machine {:016X}", row[4].Get<uint64>()), true);
         return;
     }
-    uint64 const renewed = row[6].Get<uint64>();
+    uint64 const renewed = row[7].Get<uint64>();
     uint64 const now = AccountMgr::Now();
     uint64 const lifetime = static_cast<uint64>(attempt->Settings->SessionKeyLifetime.count());
     if (now >= renewed + lifetime)
@@ -154,8 +156,8 @@ void LoginSession::ContinueValidation(std::shared_ptr<ValidateAttempt> const& at
             false);
         return;
     }
-    attempt->StoredKey = row[4].Get<std::string>();
-    uint8 const keyId = row[5].Get<uint8>();
+    attempt->StoredKey = row[5].Get<std::string>();
+    uint8 const keyId = row[6].Get<uint8>();
     std::optional<std::string> const sessionKey = sAccountMgr.GetSettings()->Keys.OpenSessionKey(attempt->StoredKey, keyId, attempt->AccountId);
     if (!sessionKey)
     {
@@ -167,10 +169,16 @@ void LoginSession::ContinueValidation(std::shared_ptr<ValidateAttempt> const& at
         FailValidation(attempt.get(), AuthResult::ValidateFailed, "its PassKey3 was not made from the account's session key and this connection's offer", true);
         return;
     }
-    bool const accountBanned = !row[7].IsNull();
+    bool const accountBanned = !row[8].IsNull();
     if (accountBanned || row[2].Get<bool>())
     {
-        FailValidation(attempt.get(), AuthResult::AccountBanned, accountBanned ? "the account is banned" : "the account is locked", false, accountBanned ? row[7].Get<uint64>() : 0);
+        FailValidation(attempt.get(), AuthResult::AccountBanned, accountBanned ? "the account is banned" : "the account is locked", false, accountBanned ? row[8].Get<uint64>() : 0);
+        return;
+    }
+    if (!attempt->Settings->AllowsSignIn(attempt->SecurityLevel))
+    {
+        std::string const reason = attempt->Settings->MaintenanceReason;
+        FailValidation(attempt.get(), AuthResult::ErrorNoLock, fmt::format("installation maintenance refuses validation: {}", reason), false, 0, reason);
         return;
     }
 
@@ -242,6 +250,7 @@ void LoginSession::CompleteValidation(std::shared_ptr<ValidateAttempt> const& at
     _failedResponses = 0;
     _accountName = attempt->Username;
     _accountId.store(attempt->AccountId, std::memory_order_relaxed);
+    _securityLevel = attempt->SecurityLevel;
     _machineId = attempt->MachineId;
     SetStatus(SessionStatus::Authenticated);
 
@@ -260,7 +269,7 @@ void LoginSession::CompleteValidation(std::shared_ptr<ValidateAttempt> const& at
         GetSessionId(), attempt->AddressText, attempt->Username, attempt->AccountId, attempt->MachineId);
 }
 
-void LoginSession::FailValidation(ValidateAttempt* attempt, AuthResult result, std::string_view detail, bool countsAsGuess, uint64 unbanDate)
+void LoginSession::FailValidation(ValidateAttempt* attempt, AuthResult result, std::string_view detail, bool countsAsGuess, uint64 unbanDate, std::string_view clientReason)
 {
     _authenticating = false;
     if (attempt && !attempt->Finished)
@@ -284,6 +293,8 @@ void LoginSession::FailValidation(ValidateAttempt* attempt, AuthResult result, s
     response.Error = result;
     if (SystemMessages::CarriesBanEnd(static_cast<uint32>(result)))
         response.TimeStamp = SystemMessages::FormatBanEnd(unbanDate);
+    else if (!clientReason.empty())
+        response.Reason = std::string(clientReason);
     else
         response.Reason = std::string(AuthResults::GetName(result));
     SendDmlMessageDelayedClose(response);

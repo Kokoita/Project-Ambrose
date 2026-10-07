@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Login rules read from configuration, which each authentication attempt, character list and idle check takes a snapshot of: the name the login server shows, revision enforcement, failed-attempt limits and lockouts, what a second login to an online account does, how long session keys last, how many wizards an account may hold and whether it may name them itself, when idle clients are dropped, and how long a shutdown waits for clients to leave.
+ * Login rules read from configuration, which each authentication attempt, character list and idle check takes a snapshot of: the name the login server shows, revision enforcement, maintenance and its game-master bypass and published window, failed-attempt limits and lockouts, what a second login to an online account does, how long session keys last, how many wizards an account may hold and whether it may name them itself, when idle clients are dropped, and how long a shutdown waits for clients to leave.
  */
 
 #ifndef AMBROSE_LOGINSETTINGS_H
@@ -39,13 +39,23 @@ struct LoginSettings
     static constexpr uint32 MaxKeepDeletedDays = 36500;
     static constexpr uint32 DefaultShutdownGraceSeconds = 5;
     static constexpr uint32 MaxShutdownGraceSeconds = 60;
+    static constexpr uint32 DefaultMaintenanceBypassLevel = 2;
+    static constexpr uint32 MaxMaintenanceBypassLevel = 4;
+    static constexpr uint64 MaxMaintenanceWindowEpochSeconds = 253402300799;
+    static constexpr std::size_t MaxMaintenanceReasonBytes = 255;
 
     static constexpr std::string_view DefaultName = "Ambrose";
     static constexpr std::size_t MaxNameBytes = 64;
+    static constexpr std::string_view DefaultMaintenanceReason = "The installation is temporarily unavailable for maintenance.";
 
     std::string Name{ DefaultName };
     bool EnforceRevision = false;
     std::vector<std::string> AllowedRevisions;
+    bool Maintenance = false;
+    uint8 MaintenanceBypassLevel = DefaultMaintenanceBypassLevel;
+    std::string MaintenanceReason{ DefaultMaintenanceReason };
+    uint64 MaintenanceWindowStart = 0;
+    uint64 MaintenanceWindowEnd = 0;
     uint32 MaxAuthAttempts = DefaultMaxAuthAttempts;
     std::chrono::seconds Lockout{ DefaultLockoutSeconds };
     std::chrono::seconds KeyTtl{ DefaultKeyTtlSeconds };
@@ -60,6 +70,7 @@ struct LoginSettings
     std::chrono::seconds ShutdownGrace{ DefaultShutdownGraceSeconds };
 
     bool AllowsRevision(std::string_view revision) const;
+    bool AllowsSignIn(uint8 securityLevel) const noexcept;
 
     static LoginSettings Load(ConfigMgr const& config, std::vector<std::string>* problems = nullptr);
 

@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Authenticates MSG_USER_AUTHEN_V3: reserves the attempt against the address's lockout, decrypts Rec1 with the session's offer, checks the session id, revision, machine and address bans, account, ClientKey1, and account bans and locks from one asynchronous query, kicks any earlier session holding the account, stores the session key sealed like a verifier with the last login and a resealed verifier in one transaction, then admits the client or answers with the error, closing after too many failures, and refuses the older authentication messages. A ban or lock refusal carries the ban's end as TimeStamp, in Unix seconds, a permanent one as the latest end the client reads, and no Reason, since the client would show GUI_<Reason> beside its dated ban line.
+ * Authenticates MSG_USER_AUTHEN_V3: reserves the attempt against the address's lockout, decrypts Rec1 with the session's offer, checks the session id, revision, machine and address bans, account, ClientKey1, security level, and account bans and locks from one asynchronous query, refuses player accounts during maintenance with its configured reason while allowing the bypass level, kicks any earlier session holding the account, stores the session key sealed like a verifier with the last login and a resealed verifier in one transaction, then admits the client or answers with the error, closing after too many failures, and refuses the older authentication messages. A ban or lock refusal carries the ban's end as TimeStamp, in Unix seconds, a permanent one as the latest end the client reads, and no Reason, since the client would show GUI_<Reason> beside its dated ban line.
  */
 
 #include "AccountMgr.h"
@@ -22,12 +22,14 @@ namespace
 {
     constexpr char const* AuthLog = "server.loginserver";
 
-    LoginMessages::UserAuthenRsp Failure(AuthResult result, uint64 unbanDate = 0)
+    LoginMessages::UserAuthenRsp Failure(AuthResult result, uint64 unbanDate = 0, std::string_view reason = {})
     {
         LoginMessages::UserAuthenRsp response;
         response.Error = result;
         if (SystemMessages::CarriesBanEnd(static_cast<uint32>(result)))
             response.TimeStamp = SystemMessages::FormatBanEnd(unbanDate);
+        else if (!reason.empty())
+            response.Reason = std::string(reason);
         else
             response.Reason = std::string(AuthResults::GetName(result));
         return response;
@@ -55,6 +57,7 @@ struct LoginSession::AuthAttempt
     bool Finished = true;
     LoginSalt Salt;
     uint64 MachineId = 0;
+    uint8 SecurityLevel = 0;
     std::string Username;
     std::string ClientKey1;
     uint64 AccountId = 0;
@@ -161,14 +164,14 @@ void LoginSession::ContinueAuthentication(std::shared_ptr<AuthAttempt> const& at
     }
 
     PreparedResultSet const& row = *result;
-    if (!row[7].IsNull())
+    if (!row[8].IsNull())
     {
-        FailAuthentication(attempt.get(), AuthResult::MachineBanned, fmt::format("machine {:016X} is banned", attempt->MachineId), false, false, row[7].Get<uint64>());
+        FailAuthentication(attempt.get(), AuthResult::MachineBanned, fmt::format("machine {:016X} is banned", attempt->MachineId), false, false, row[8].Get<uint64>());
         return;
     }
-    if (!row[6].IsNull())
+    if (!row[7].IsNull())
     {
-        FailAuthentication(attempt.get(), AuthResult::MachineBanned, "the address is banned", false, false, row[6].Get<uint64>());
+        FailAuthentication(attempt.get(), AuthResult::MachineBanned, "the address is banned", false, false, row[7].Get<uint64>());
         return;
     }
     if (row[0].IsNull())
@@ -184,7 +187,9 @@ void LoginSession::ContinueAuthentication(std::shared_ptr<AuthAttempt> const& at
     account.StoredVerifier = row[2].Get<std::string>();
     account.VerifierKeyId = row[3].Get<uint8>();
     account.Locked = row[4].Get<bool>();
-    bool const accountBanned = !row[5].IsNull();
+    account.SecurityLevel = row[5].Get<uint8>();
+    attempt->SecurityLevel = account.SecurityLevel;
+    bool const accountBanned = !row[6].IsNull();
     attempt->AccountId = account.Id;
     attempt->Username = account.Username;
 
@@ -201,7 +206,13 @@ void LoginSession::ContinueAuthentication(std::shared_ptr<AuthAttempt> const& at
     }
     if (accountBanned || account.Locked)
     {
-        FailAuthentication(attempt.get(), AuthResult::AccountBanned, accountBanned ? "the account is banned" : "the account is locked", false, false, accountBanned ? row[5].Get<uint64>() : 0);
+        FailAuthentication(attempt.get(), AuthResult::AccountBanned, accountBanned ? "the account is banned" : "the account is locked", false, false, accountBanned ? row[6].Get<uint64>() : 0);
+        return;
+    }
+    if (!attempt->Settings->AllowsSignIn(attempt->SecurityLevel))
+    {
+        std::string const reason = attempt->Settings->MaintenanceReason;
+        FailAuthentication(attempt.get(), AuthResult::ErrorNoLock, fmt::format("installation maintenance refuses sign-in: {}", reason), false, true, 0, reason);
         return;
     }
 
@@ -302,6 +313,7 @@ void LoginSession::CompleteAuthentication(std::shared_ptr<AuthAttempt> const& at
     _failedResponses = 0;
     _accountName = attempt->Username;
     _accountId.store(attempt->AccountId, std::memory_order_relaxed);
+    _securityLevel = attempt->SecurityLevel;
     _machineId = attempt->MachineId;
     SetStatus(SessionStatus::Authenticated);
 
@@ -321,7 +333,7 @@ void LoginSession::CompleteAuthentication(std::shared_ptr<AuthAttempt> const& at
         GetSessionId(), attempt->AddressText, attempt->Username, attempt->AccountId, attempt->MachineId);
 }
 
-void LoginSession::FailAuthentication(AuthAttempt* attempt, AuthResult result, std::string_view detail, bool countsAsGuess, bool close, uint64 unbanDate)
+void LoginSession::FailAuthentication(AuthAttempt* attempt, AuthResult result, std::string_view detail, bool countsAsGuess, bool close, uint64 unbanDate, std::string_view clientReason)
 {
     _authenticating = false;
     bool closing = close;
@@ -351,9 +363,9 @@ void LoginSession::FailAuthentication(AuthAttempt* attempt, AuthResult result, s
     else
         LOG_DEBUG(AuthLog, "Session {} from {} failed to authenticate as {}: {}; sent MSG_USER_AUTHEN_RSP Error={}{}", GetSessionId(), address, name, detail, AuthResults::GetName(result), closing ? " and closed the session" : "");
     if (closing)
-        SendDmlMessageDelayedClose(Failure(result, unbanDate));
+        SendDmlMessageDelayedClose(Failure(result, unbanDate, clientReason));
     else
-        SendDmlMessage(Failure(result, unbanDate));
+        SendDmlMessage(Failure(result, unbanDate, clientReason));
 }
 
 void LoginSession::AbortAuthentication(AuthAttempt* attempt, std::exception const& failure)

@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Drives MSG_USER_AUTHEN_V3 over loopback against a real LoginSession: a closed login database times out, and with AMBROSE_TEST_DB set valid credentials are admitted with the session key stored, sealed with the active key when there is one and bound to its account, a wrong session id, wrong ClientKey1, oversized or malformed Rec1, unknown account, banned machine, banned address, locked or banned account and disallowed revision each get their error and store no session, a ban or lock carrying its end in Unix seconds, a permanent one the latest end the client reads, and no Reason, and nothing else any TimeStamp, account bans stay hidden behind a wrong password, the attempt limit is read live and locks the address out, overlapping requests strike and a client that leaves mid-login leaves no claim or reservation behind, duplicate logins kick each earlier session or are rejected, verifiers are sealed again with the active key at login, and the older authentication messages are refused until the session closes.
+ * Drives MSG_USER_AUTHEN_V3 over loopback against a real LoginSession: a closed login database times out, and with AMBROSE_TEST_DB set valid credentials are admitted with the session key stored, sealed with the active key when there is one and bound to its account, maintenance refuses a player with the configured reason and admits an account at the bypass level, a wrong session id, wrong ClientKey1, oversized or malformed Rec1, unknown account, banned machine, banned address, locked or banned account and disallowed revision each get their error and store no session, a ban or lock carrying its end in Unix seconds, a permanent one the latest end the client reads, and no Reason, and nothing else any TimeStamp, account bans stay hidden behind a wrong password, the attempt limit is read live and locks the address out, overlapping requests strike and a client that leaves mid-login leaves no claim or reservation behind, duplicate logins kick each earlier session or are rejected, verifiers are sealed again with the active key at login, and the older authentication messages are refused until the session closes.
  */
 
 #include "AccountMgr.h"
@@ -187,6 +187,28 @@ TEST_F(AuthHandlerDatabaseTest, ValidCredentialsAreAdmittedWithAStoredSessionKey
     SendAuthen(client, Credentials(client, "wizard", "hunter22"));
     EXPECT_FALSE(ReadDml(*client.Socket, std::chrono::milliseconds(300)));
     EXPECT_EQ(session->GetStrikes(), 0u);
+}
+
+TEST_F(AuthHandlerDatabaseTest, MaintenanceRefusesPlayersWithItsReasonAndAdmitsItsBypassLevel)
+{
+    LoginSettings settings;
+    settings.Maintenance = true;
+    settings.MaintenanceReason = "Database migration in progress";
+    sLoginMgr.SetSettings(settings);
+    LoginClient player = _server->Connect();
+    SendAuthen(player, Credentials(player, "Wizard", "hunter22"));
+
+    std::optional<LoginMessages::UserAuthenRsp> const refusal = ReadMessage<LoginMessages::UserAuthenRsp>(player);
+    ASSERT_TRUE(refusal);
+    EXPECT_EQ(refusal->Error, AuthResult::ErrorNoLock);
+    EXPECT_EQ(refusal->Reason, "Database migration in progress");
+    EXPECT_TRUE(player.Socket->WaitForClose());
+    EXPECT_EQ(Count("SELECT COUNT(*) FROM `account_session`"), 0u);
+
+    ASSERT_EQ(sAccountMgr.SetSecurityLevel(_accountId, LoginSettings::DefaultMaintenanceBypassLevel), AccountOpResult::Ok);
+    LoginClient gameMaster = _server->Connect();
+    SendAuthen(gameMaster, Credentials(gameMaster, "Wizard", "hunter22"));
+    EXPECT_EQ(ExpectAdmitted(gameMaster).size(), 44u);
 }
 
 TEST_F(AuthHandlerDatabaseTest, EachFailureGetsItsErrorAndStoresNoSession)

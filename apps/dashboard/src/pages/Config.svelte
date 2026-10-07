@@ -1,4 +1,4 @@
-<!-- Project Ambrose by Imjustchico: The configuration page, live from each app: its live settings by category with search, each with its value, default, the layer it comes from, when a change takes hold and whether it is secret, restricted or locked by a layer above live values, changed through a dialog with a typed input, a reason and a review step, with its history and a revert, a reset to the config value, and a reveal for a secret to a caller allowed to see one; presets of chosen categories or keys exported to a file and imported with a checked diff; the options only the config file holds with where each was read; and every option that takes effect only at the next start, with why. It reads the app's event feed every second, so a change made anywhere shows here within about a second, and every fresh read hides a revealed secret again and drops what another app showed. -->
+<!-- Project Ambrose by Imjustchico: The configuration page, live from each app: its live settings by category with search, each with its value, default, the layer it comes from, when a change takes hold and whether it is secret, restricted or locked by a layer above live values, changed through a dialog with a typed input, a reason and a review step, with its history and a revert, a reset to the config value, and a reveal for a secret to a caller allowed to see one; presets of chosen categories or keys exported to a file and imported with a checked diff; the loginserver's maintenance banner, audited control and optional published window; the options only the config file holds with where each was read; and every option that takes effect only at the next start, with why. It reads the app's event feed every second, so a change made anywhere shows here within about a second, and every fresh read hides a revealed secret again and drops what another app showed. -->
 <script lang="ts">
     import * as Card from "$lib/components/ui/card/index.js";
     import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -26,6 +26,7 @@
     import SettingChange from "../components/SettingChange.svelte";
     import SettingHistory from "../components/SettingHistory.svelte";
     import StatusBadge from "../components/StatusBadge.svelte";
+    import MaintenanceControl from "../components/MaintenanceControl.svelte";
 
     const EventPoll = 1000;
 
@@ -273,6 +274,9 @@
 {:else if !answer}
     <p class="text-sm text-muted-foreground">Reading the settings of {app === "" ? "this app" : app}.</p>
 {:else}
+    {#if settings.some((setting) => setting.key === "Login.Maintenance")}
+        <MaintenanceControl {app} settings={settings} canEdit={canEdit} done={done} />
+    {/if}
     <div class="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
         <span>
             {liveCount} live setting{liveCount === 1 ? "" : "s"} and {settings.length - liveCount} other option{settings.length -

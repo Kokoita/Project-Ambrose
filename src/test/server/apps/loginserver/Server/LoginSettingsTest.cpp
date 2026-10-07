@@ -1,6 +1,6 @@
 /*
  * Project Ambrose by Imjustchico
- * Tests the Login options: defaults, the server name trimmed, allowed empty and bounded, a revision list with spaces and empty entries, clamped limits, durations and AFK warning byte, a disabled AFK timeout and shutdown grace, an unknown duplicate login policy, and enforcement refused without any allowed revision.
+ * Tests the Login options: defaults, the server name trimmed, allowed empty and bounded, maintenance bypass and windows, a revision list with spaces and empty entries, clamped limits, durations and AFK warning byte, a disabled AFK timeout and shutdown grace, an unknown duplicate login policy, and enforcement refused without any allowed revision.
  */
 
 #include "ConfigMgr.h"
@@ -37,6 +37,44 @@ TEST(LoginSettingsTest, DefaultsApplyWithoutOptions)
     EXPECT_EQ(settings.AfkTimeout, std::chrono::seconds(360));
     EXPECT_EQ(settings.AfkWarning, 1);
     EXPECT_EQ(settings.ShutdownGrace, std::chrono::seconds(5));
+    EXPECT_FALSE(settings.Maintenance);
+    EXPECT_EQ(settings.MaintenanceBypassLevel, 2);
+    EXPECT_EQ(settings.MaintenanceReason, LoginSettings::DefaultMaintenanceReason);
+    EXPECT_EQ(settings.MaintenanceWindowStart, 0u);
+    EXPECT_EQ(settings.MaintenanceWindowEnd, 0u);
+}
+
+TEST(LoginSettingsTest, MaintenanceUsesTheConfiguredBypassAndReason)
+{
+    std::vector<std::string> problems;
+    LoginSettings settings = LoadFrom("Login.Maintenance = 1\nLogin.MaintenanceBypassLevel = 3\nLogin.MaintenanceReason = \" Database upgrade \"\n"
+        "Login.MaintenanceWindowStart = 1791360000\nLogin.MaintenanceWindowEnd = 1791363600\n", problems);
+    EXPECT_TRUE(problems.empty());
+    EXPECT_TRUE(settings.Maintenance);
+    EXPECT_EQ(settings.MaintenanceBypassLevel, 3);
+    EXPECT_EQ(settings.MaintenanceReason, "Database upgrade");
+    EXPECT_EQ(settings.MaintenanceWindowStart, 1791360000u);
+    EXPECT_EQ(settings.MaintenanceWindowEnd, 1791363600u);
+    EXPECT_FALSE(settings.AllowsSignIn(2));
+    EXPECT_TRUE(settings.AllowsSignIn(3));
+    EXPECT_TRUE(settings.AllowsSignIn(4));
+    settings.Maintenance = false;
+    EXPECT_TRUE(settings.AllowsSignIn(0));
+}
+
+TEST(LoginSettingsTest, InvalidMaintenanceValuesFallBackSafely)
+{
+    std::vector<std::string> problems;
+    LoginSettings const settings = LoadFrom("Login.MaintenanceBypassLevel = 5\nLogin.MaintenanceReason = \"\"\n"
+        "Login.MaintenanceWindowStart = 10\nLogin.MaintenanceWindowEnd = 10\n", problems);
+    EXPECT_EQ(settings.MaintenanceBypassLevel, LoginSettings::MaxMaintenanceBypassLevel);
+    EXPECT_EQ(settings.MaintenanceReason, LoginSettings::DefaultMaintenanceReason);
+    EXPECT_EQ(settings.MaintenanceWindowStart, 0u);
+    EXPECT_EQ(settings.MaintenanceWindowEnd, 0u);
+    EXPECT_EQ(problems, (std::vector<std::string>{
+        "Login.MaintenanceBypassLevel = 5 is outside 0-4; using 4",
+        "Login.MaintenanceReason must be 1-255 bytes; using the default maintenance reason",
+        "Login.MaintenanceWindowStart and Login.MaintenanceWindowEnd must both be zero or form an increasing Unix-time window; clearing the window" }));
 }
 
 TEST(LoginSettingsTest, ReadsListsAndClampsEveryOption)
