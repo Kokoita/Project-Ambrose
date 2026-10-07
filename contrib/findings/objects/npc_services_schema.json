@@ -1,0 +1,24 @@
+{
+  "subject": "NPCServices.xml",
+  "area": "objects",
+  "claim": "On r806919.Wizard_1_610, Root.wad NPCServices.xml has root class NPCServices (hash 849610977) with a 32-bit m_npcProximity float set to 500, one unresolved boolean property, and one unresolved 24840-bit service-list property whose values include Registrar and Training.",
+  "revision": "r806919.Wizard_1_610",
+  "method": "static",
+  "how_to_repeat": [
+    "Build the repository's client and schemaprobe tools with the Windows preset.",
+    "Run `client types 849610977 --client <install>` and confirm the client names the unknown root class NPCServices.",
+    "Run `schemaprobe --client <install> --type-dump <dump> --wad Root.wad --candidate NPCServices --output <temporary output>`.",
+    "Inspect the structured schema and value readings for class hash 849610977 without copying the temporary output into the repository."
+  ],
+  "evidence": [
+    "The client tool names class hash 849610977 as NPCServices even though the generated type dump does not contain it.",
+    "The candidate schema contains m_npcProximity as a float and leaves property hashes 1348307606 and 1847846230 unresolved.",
+    "The NPCServices root has one 32-bit m_npcProximity value interpreted as 500, one 1-bit boolean value, and one 24840-bit unresolved value.",
+    "The unresolved service-list reading contains 29 labels, including Registrar and Training, alongside Shopping, Banking, Questing and other service labels."
+  ],
+  "disproof": "A repeatable schemaprobe run on r806919.Wizard_1_610 that assigns a different root class or property shape to NPCServices.xml, or whose service-list reading contains neither Registrar nor Training, would refute this finding.",
+  "confidence": "medium",
+  "submitted_by": "Kokoita",
+  "submitted_on": "2026-09-30",
+  "status": "claimed"
+}
