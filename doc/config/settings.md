@@ -77,16 +77,6 @@ Access says who may see and change a setting over the admin API and the panel. A
 | `Login.SessionKeyLifetime` | unsigned | 108000 s | from 60 to 2592000 s | next connection or operation | loginserver | normal | How long the session key a successful login issues stays valid. |
 | `Login.ShutdownGrace` | unsigned | 5 s | from 0 to 60 s | live | loginserver | normal | How long a stopping login server waits for its shutdown notices to be written. |
 
-## Operations
-
-| Key | Type | Default | Bounds | Applies | Apps | Access | What it does |
-|---|---|---|---|---|---|---|---|
-| `Login.Maintenance` | bool | false | none | live | loginserver | normal | Whether the login server refuses player sign-ins while maintenance is active; accounts at or above Login.MaintenanceBypassLevel may still sign in. |
-| `Login.MaintenanceBypassLevel` | unsigned | 2 | from 0 to 4 | live | loginserver | normal | The minimum account security level allowed to sign in while maintenance is active; 2 is the game-master level. |
-| `Login.MaintenanceReason` | string | The installation is temporarily unavailable for maintenance. | at most 255 bytes | live | loginserver | normal | The reason shown to a player refused during maintenance and published with the optional maintenance window. |
-| `Login.MaintenanceWindowEnd` | unsigned | 0 Unix seconds | from 0 to 253402300799 Unix seconds | live | loginserver | normal | The optional planned maintenance window end in UTC Unix seconds; 0 means no end is published. |
-| `Login.MaintenanceWindowStart` | unsigned | 0 Unix seconds | from 0 to 253402300799 Unix seconds | live | loginserver | normal | The optional planned maintenance window start in UTC Unix seconds; 0 means no start is published. |
-
 ## Network
 
 | Key | Type | Default | Bounds | Applies | Apps | Access | What it does |
@@ -109,6 +99,16 @@ Access says who may see and change a setting over the admin API and the panel. A
 | `Network.RateLimit.PerSecond` | unsigned | 50 | from 1 to 100000 | live | gameserver, loginserver | normal | How fast a session's inbound frame allowance refills, per second. |
 | `Network.SendQueueHighWater` | unsigned | 16777216 bytes | from 1048576 to 1073741824 bytes | live | gameserver, loginserver | normal | How many bytes one connection may have waiting to be sent before it is closed; applies to existing connections immediately. |
 | `Network.SessionAcceptTimeout` | unsigned | 15 s | from 1 to 3600 s | next connection or operation | gameserver, loginserver | normal | How long a new connection may take to finish its handshake. |
+
+## Operations
+
+| Key | Type | Default | Bounds | Applies | Apps | Access | What it does |
+|---|---|---|---|---|---|---|---|
+| `Login.Maintenance` | bool | false | none | live | loginserver | normal | Whether the login server refuses player sign-ins while maintenance is active; accounts at or above Login.MaintenanceBypassLevel may still sign in. |
+| `Login.MaintenanceBypassLevel` | unsigned | 2 | from 0 to 4 | live | loginserver | normal | The minimum account security level allowed to sign in while maintenance is active; 2 is the game-master level. |
+| `Login.MaintenanceReason` | string | The installation is temporarily unavailable for maintenance. | at most 255 bytes | live | loginserver | normal | The reason shown to a player refused during maintenance and published with the optional maintenance window. |
+| `Login.MaintenanceWindowEnd` | unsigned | 0 Unix seconds | from 0 to 253402300799 Unix seconds | live | loginserver | normal | The optional planned maintenance window end in UTC Unix seconds; 0 means no end is published. |
+| `Login.MaintenanceWindowStart` | unsigned | 0 Unix seconds | from 0 to 253402300799 Unix seconds | live | loginserver | normal | The optional planned maintenance window start in UTC Unix seconds; 0 means no start is published. |
 
 ## Player
 
